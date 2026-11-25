@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f172a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Київ: дороги</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root{--bg:#0f172a;--panel:#ffffff;--ink:#0f172a;--muted:#64748b;--line:#e2e8f0;
+        --green:#16a34a;--yellow:#eab308;--red:#dc2626;--grey:#94a3b8;--orange:#f97316;--accent:#2563eb}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;font:15px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--ink);background:var(--bg)}
+  #map{position:fixed;inset:0}
+  /* верхня смуга статусу */
+  #top{position:fixed;top:0;left:0;right:0;z-index:1000;padding:calc(env(safe-area-inset-top) + 8px) 10px 8px;
+       display:flex;gap:6px;flex-wrap:wrap;align-items:center;pointer-events:none}
+  .chip{pointer-events:auto;background:rgba(255,255,255,.95);border-radius:999px;padding:5px 10px;font-size:13px;
+        box-shadow:0 1px 4px rgba(0,0,0,.25);display:flex;align-items:center;gap:6px;white-space:nowrap}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--grey);flex:none}
+  .dot.ok{background:var(--green)} .dot.stale{background:var(--yellow)} .dot.err{background:var(--red)}
+  #refreshBtn{border:0;cursor:pointer;font-size:13px}
+  #alertBanner{display:none;pointer-events:auto;width:100%;background:#b91c1c;color:#fff;border-radius:10px;padding:8px 12px;font-size:13px;
+               box-shadow:0 1px 4px rgba(0,0,0,.3)}
+  /* нижня панель */
+  #sheet{position:fixed;left:0;right:0;bottom:0;z-index:1000;background:var(--panel);border-radius:16px 16px 0 0;
+         box-shadow:0 -2px 12px rgba(0,0,0,.25);max-height:62vh;display:flex;flex-direction:column;
+         padding-bottom:env(safe-area-inset-bottom);transition:max-height .2s}
+  #sheet.collapsed{max-height:52px}
+  #grab{height:20px;display:flex;justify-content:center;align-items:center;cursor:pointer}
+  #grab span{width:40px;height:4px;border-radius:2px;background:#cbd5e1}
+  #tabs{display:flex;border-bottom:1px solid var(--line);padding:0 8px}
+  #tabs button{flex:1;border:0;background:none;padding:6px 4px 10px;font:inherit;font-size:14px;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent}
+  #tabs button.on{color:var(--ink);border-bottom-color:var(--accent);font-weight:600}
+  .pane{display:none;overflow:auto;padding:10px 14px 14px}
+  .pane.on{display:block}
+  .card{border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:8px}
+  .card h3{margin:0 0 4px;font-size:15px;display:flex;justify-content:space-between;gap:8px}
+  .big{font-size:22px;font-weight:700}
+  .muted{color:var(--muted);font-size:13px}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .tag{display:inline-block;border-radius:6px;padding:1px 7px;font-size:12px;font-weight:600;color:#fff}
+  .tag.g{background:var(--green)} .tag.y{background:var(--yellow);color:#422006} .tag.r{background:var(--red)}
+  .tag.n{background:var(--grey)} .tag.k{background:#111}
+  input,select{width:100%;font:inherit;padding:9px 10px;border:1px solid var(--line);border-radius:10px;margin:4px 0 8px}
+  button.btn{font:inherit;border:0;border-radius:10px;padding:9px 14px;background:var(--accent);color:#fff;cursor:pointer}
+  button.btn.sec{background:#e2e8f0;color:var(--ink)}
+  button.link{border:0;background:none;color:var(--accent);font:inherit;font-size:13px;cursor:pointer;padding:0}
+  label{font-size:13px;color:var(--muted)}
+  ul.rep{margin:6px 0 0;padding-left:18px;font-size:13px}
+  .legend{display:flex;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-top:6px}
+  .legend i{display:inline-block;width:18px;height:4px;border-radius:2px;vertical-align:middle;margin-right:4px}
+  #pickHint{display:none;position:fixed;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top) + 56px);z-index:1001;
+            background:var(--accent);color:#fff;padding:8px 14px;border-radius:10px;font-size:14px;box-shadow:0 1px 6px rgba(0,0,0,.3)}
+  .leaflet-popup-content{font-size:13px;max-height:45vh;overflow:auto}
+  .leaflet-popup-content table{border-collapse:collapse}
+  .leaflet-popup-content td{padding:2px 6px 2px 0;vertical-align:top;border-bottom:1px solid #f1f5f9}
+  .leaflet-popup-content td:first-child{color:var(--muted)}
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div id="top">
+  <div class="chip"><span class="dot" id="dRep"></span><span id="tRep">Ремонти</span></div>
+  <div class="chip"><span class="dot" id="dTraf"></span><span id="tTraf">Затори</span></div>
+  <div class="chip"><span class="dot" id="dAl"></span><span id="tAl">Тривога: —</span></div>
+  <button class="chip" id="refreshBtn" title="Оновити">⟳ Оновити</button>
+  <div id="alertBanner">Повітряна тривога. Через збої GPS дані заторів можуть бути неточними: ділянки з низькою довірою позначені сірим. Ремонти КМДА від тривоги не залежать.</div>
+</div>
+<div id="pickHint"></div>
+
+<div id="sheet">
+  <div id="grab"><span></span></div>
+  <div id="tabs">
+    <button data-tab="routes" class="on">Маршрути</button>
+    <button data-tab="points">Ділянки</button>
+    <button data-tab="repairs">Ремонти</button>
+    <button data-tab="settings">Налаштування</button>
+  </div>
+
+  <div class="pane on" id="p-routes">
+    <div id="routesList"></div>
+    <div class="card">
+      <h3>Додати маршрут</h3>
+      <label>Назва</label><input id="rName" placeholder="Дім → Робота">
+      <label>Звідки (адреса або «на карті»)</label>
+      <div class="row"><input id="rFrom" placeholder="вул. Миру, 1" style="flex:1"><button class="btn sec" data-pick="from">На карті</button></div>
+      <label>Куди</label>
+      <div class="row"><input id="rTo" placeholder="просп. Перемоги, 10" style="flex:1"><button class="btn sec" data-pick="to">На карті</button></div>
+      <button class="btn" id="rAdd">Зберегти маршрут</button>
+      <div class="muted" id="rMsg"></div>
+    </div>
+  </div>
+
+  <div class="pane" id="p-points">
+    <div class="muted" style="margin-bottom:8px">Ключові ділянки: швидкість зараз проти звичайної та «довіра» TomTom. Довіра нижче 50% означає, що даних мало або вони сумнівні (часто під час тривоги). Щоб додати ділянку, утримуйте палець на карті.</div>
+    <div id="pointsList"></div>
+    <div class="legend">
+      <span><i style="background:var(--green)"></i>вільно</span>
+      <span><i style="background:var(--yellow)"></i>повільно</span>
+      <span><i style="background:var(--red)"></i>затор</span>
+      <span><i style="background:var(--grey)"></i>ненадійно</span>
+      <span><i style="background:#111"></i>перекрито</span>
+    </div>
+  </div>
+
+  <div class="pane" id="p-repairs">
+    <div class="row" style="margin-bottom:6px">
+      <input id="repSearch" placeholder="Пошук: вулиця, район, виконавець" style="flex:1;margin:0">
+    </div>
+    <div class="legend" style="margin-bottom:8px">
+      <span><i style="background:var(--red)"></i>повне перекриття</span>
+      <span><i style="background:var(--orange)"></i>часткове обмеження</span>
+    </div>
+    <div id="repList" class="muted">Завантаження…</div>
+  </div>
+
+  <div class="pane" id="p-settings">
+    <div class="card">
+      <h3>Ключ TomTom</h3>
+      <div class="muted">Безкоштовний ключ: developer.tomtom.com → Dashboard → Keys. Зберігається лише на цьому пристрої.</div>
+      <input id="sKey" placeholder="ключ API" autocomplete="off">
+    </div>
+    <div class="card">
+      <h3>Токен alerts.in.ua (необов'язково)</h3>
+      <div class="muted">Потрібен, щоб застосунок знав про тривогу в Києві й показував попередження. Запит токена: alerts.in.ua/api-request</div>
+      <input id="sAlerts" placeholder="токен" autocomplete="off">
+    </div>
+    <div class="card">
+      <h3>Посередник для даних КМДА (необов'язково)</h3>
+      <div class="muted">Лише якщо ремонти не вантажаться через обмеження браузера. Формат: https://…/?url= (адреса джерела додається в кінець).</div>
+      <input id="sProxy" placeholder="https://my-worker.workers.dev/?url=" autocomplete="off">
+    </div>
+    <div class="card">
+      <h3>Шари карти</h3>
+      <label><input type="checkbox" id="lFlow" style="width:auto"> Затори TomTom (кольорові лінії)</label><br>
+      <label><input type="checkbox" id="lInc" style="width:auto"> ДТП і перекриття TomTom</label><br>
+      <label><input type="checkbox" id="lRep" style="width:auto"> Ремонти КМДА</label>
+    </div>
+    <button class="btn" id="sSave">Зберегти</button>
+    <button class="btn sec" id="sResetPts">Повернути стандартні ділянки</button>
+    <p class="muted">Дані: OpenStreetMap, TomTom, Портал даних Києва (Департамент транспортної інфраструктури КМДА). Застосунок не використовує GPS телефона, тому підміна координат під час тривоги на нього не впливає.</p>
+  </div>
+</div>
+
+<script>
+'use strict';
+/* ---------- налаштування ---------- */
+const KYIV = [50.4501, 30.5234];
+const REFRESH_MS = 120000;           // 2 хв: вкладається в безкоштовний ліміт TomTom
+const REPAIRS_URL = 'https://gisserver.kyivcity.gov.ua/mayno/rest/services/KYIV_API/%D0%9F%D0%B5%D1%80%D0%B5%D0%BA%D1%80%D0%B8%D1%82%D1%82%D1%8F/MapServer/0/query?where=1%3D1&outFields=*&outSR=4326&f=geojson';
+const KYIV_ALERT_UID = 31;           // м. Київ в alerts.in.ua
+// Орієнтовні точки; TomTom сам «прилипає» до найближчої дороги. Можна змінити чи видалити.
+const DEFAULT_POINTS = [
+  {name:'Південний міст',          lat:50.3962, lon:30.5762},
+  {name:'Міст Патона',             lat:50.4337, lon:30.5716},
+  {name:'Метро міст',              lat:50.4436, lon:30.5660},
+  {name:'Північний міст',          lat:50.4925, lon:30.5455},
+  {name:'Набережне шосе',          lat:50.4560, lon:30.5290},
+  {name:'Кільцева (Одеська пл.)',  lat:50.3925, lon:30.4880}
+];
+
+/* ---------- сховище ---------- */
+const store = {
+  get(k, d){ try{ const v = localStorage.getItem('kd_'+k); return v ? JSON.parse(v) : d; }catch(e){ return d; } },
+  set(k, v){ try{ localStorage.setItem('kd_'+k, JSON.stringify(v)); return true; }catch(e){ return false; } }
+};
+const S = {
+  key: store.get('key',''), alerts: store.get('alerts',''), proxy: store.get('proxy',''),
+  points: store.get('points', DEFAULT_POINTS), routes: store.get('routes', []),
+  layers: store.get('layers', {flow:true, inc:true, rep:true})
+};
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const $ = id => document.getElementById(id);
+const hhmm = t => new Date(t).toLocaleTimeString('uk-UA',{hour:'2-digit',minute:'2-digit'});
+const mins = s => Math.round(s/60);
+
+async function fetchJSON(url, ms = 15000){
+  const ctl = new AbortController(); const tm = setTimeout(() => ctl.abort(), ms);
+  try{
+    const r = await fetch(url, {signal: ctl.signal, cache: 'no-store'});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const txt = await r.text();
+    try{ return JSON.parse(txt); }catch(e){ return txt.trim(); }
+  } finally { clearTimeout(tm); }
+}
+
+/* ---------- статус джерел ---------- */
+function setStatus(which, state, text){
+  const d = $('d'+which), t = $('t'+which);
+  d.className = 'dot ' + (state || ''); t.textContent = text;
+}
+
+/* ---------- карта ---------- */
+const map = L.map('map', {zoomControl:false}).setView(KYIV, 12);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19, attribution:'© OpenStreetMap'}).addTo(map);
+let flowLayer = null, incLayer = null;
+
+function tomtomTiles(){
+  if(flowLayer){ map.removeLayer(flowLayer); flowLayer = null; }
+  if(incLayer){ map.removeLayer(incLayer); incLayer = null; }
+  if(!S.key) return;
+  const t = Date.now();
+  if(S.layers.flow){
+    flowLayer = L.tileLayer(`https://api.tomtom.com/traffic/map/4/tile/flow/relative0/{z}/{x}/{y}.png?key=${encodeURIComponent(S.key)}&t=${t}`,
+      {maxZoom:19, opacity:.85, attribution:'Трафік © TomTom'}).addTo(map);
+  }
+  if(S.layers.inc){
+    incLayer = L.tileLayer(`https://api.tomtom.com/traffic/map/4/tile/incidents/s3/{z}/{x}/{y}.png?key=${encodeURIComponent(S.key)}&t=${t}`,
+      {maxZoom:19}).addTo(map);
+  }
+}
+
+/* ---------- ремонти КМДА ---------- */
+let repairs = null; // GeoJSON FeatureCollection
+const SKIP = /^(objectid|fid|shape|globalid|shape_length|shape_area|st_length|st_area)/i;
+function isFull(p){ return Object.values(p||{}).some(v => typeof v === 'string' && /повн/i.test(v)); }
+function fmtVal(k, v){
+  if(typeof v === 'number' && v > 9e11 && v < 4e12) return new Date(v).toLocaleDateString('uk-UA'); // ArcGIS дати в мс
+  return v;
+}
+function repTitle(p){
+  const keys = Object.keys(p||{});
+  const pick = re => { const k = keys.find(k => re.test(k) && p[k]); return k ? p[k] : null; };
+  return pick(/name|назв|address|адрес|street|вулиц|location|місц/i) || pick(/descr|опис/i) || 'Ділянка робіт';
+}
+function repairPopup(p){
+  const rows = Object.entries(p||{}).filter(([k,v]) => !SKIP.test(k) && v !== null && v !== '' && v !== ' ')
+    .map(([k,v]) => `<tr><td>${esc(k)}</td><td>${esc(fmtVal(k,v))}</td></tr>`).join('');
+  return `<b>${esc(repTitle(p))}</b><table>${rows}</table>`;
+}
+const repairsLayer = L.geoJSON(null, {
+  style: f => ({color: isFull(f.properties) ? '#dc2626' : '#f97316', weight:6, opacity:.85, dashArray: isFull(f.properties) ? null : '8 6'}),
+  pointToLayer: (f, ll) => L.circleMarker(ll, {radius:7, color: isFull(f.properties) ? '#dc2626' : '#f97316', fillOpacity:.85}),
+  onEachFeature: (f, l) => l.bindPopup(repairPopup(f.properties))
+});
+
+async function loadRepairs(){
+  const url = S.proxy ? S.proxy + encodeURIComponent(REPAIRS_URL) : REPAIRS_URL;
+  try{
+    const gj = await fetchJSON(url, 25000);
+    if(!gj || !Array.isArray(gj.features)) throw new Error('не GeoJSON');
+    repairs = gj;
+    store.set('repSnap', {t: Date.now(), data: gj});
+    setStatus('Rep', 'ok', `Ремонти ${gj.features.length} · ${hhmm(Date.now())}`);
+  }catch(e){
+    const snap = store.get('repSnap', null);
+    if(snap){ repairs = snap.data; setStatus('Rep', 'stale', `Ремонти: знімок ${new Date(snap.t).toLocaleString('uk-UA',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}`); }
+    else { setStatus('Rep', 'err', 'Ремонти: немає зв\'язку'); }
+    console.warn('repairs', e);
+  }
+  repairsLayer.clearLayers();
+  if(repairs){ repairsLayer.addData(repairs); }
+  if(S.layers.rep) repairsLayer.addTo(map); else map.removeLayer(repairsLayer);
+  renderRepairsList();
+}
+
+function renderRepairsList(){
+  const box = $('repList');
+  if(!repairs){ box.innerHTML = 'Немає даних. Якщо проблема не зникає, вкажіть посередника в налаштуваннях.'; return; }
+  const q = $('repSearch').value.trim().toLowerCase();
+  const items = [];
+  repairsLayer.eachLayer(l => {
+    const p = l.feature.properties || {};
+    const hay = Object.values(p).join(' ').toLowerCase();
+    if(q && !hay.includes(q)) return;
+    items.push({l, p});
+  });
+  if(!items.length){ box.innerHTML = 'Нічого не знайдено.'; return; }
+  box.innerHTML = items.slice(0, 200).map((it, i) =>
+    `<div class="card" data-i="${i}" style="cursor:pointer"><h3><span>${esc(repTitle(it.p))}</span>${isFull(it.p) ? '<span class="tag r">повне</span>' : '<span class="tag y">часткове</span>'}</h3>
+     <div class="muted">${esc(datesOf(it.p))}</div></div>`).join('') + (items.length > 200 ? `<div class="muted">…і ще ${items.length-200}</div>` : '');
+  box.querySelectorAll('.card').forEach(c => c.onclick = () => {
+    const l = items[+c.dataset.i].l;
+    collapse(true);
+    if(l.getBounds) map.fitBounds(l.getBounds(), {maxZoom:16, padding:[40,40]}); else map.setView(l.getLatLng(), 16);
+    l.openPopup();
+  });
+}
+function datesOf(p){
+  return Object.entries(p).filter(([k,v]) => typeof v === 'number' && v > 9e11 && v < 4e12)
+    .map(([k,v]) => `${k}: ${new Date(v).toLocaleDateString('uk-UA')}`).join(' · ');
+}
+$('repSearch').oninput = renderRepairsList;
+
+/* ---------- ключові ділянки (TomTom Flow Segment Data) ---------- */
+const pointsLayer = L.layerGroup().addTo(map);
+let pointData = [];
+function classify(fs){
+  if(!fs) return {c:'n', col:'#94a3b8', t:'немає даних'};
+  if(fs.roadClosure) return {c:'k', col:'#111', t:'перекрито'};
+  if((fs.confidence ?? 1) < 0.5) return {c:'n', col:'#94a3b8', t:'ненадійно'};
+  const r = fs.currentSpeed / Math.max(1, fs.freeFlowSpeed);
+  if(r >= 0.75) return {c:'g', col:'#16a34a', t:'вільно'};
+  if(r >= 0.45) return {c:'y', col:'#eab308', t:'повільно'};
+  return {c:'r', col:'#dc2626', t:'затор'};
+}
+async function loadPoints(){
+  pointsLayer.clearLayers();
+  if(!S.key){ pointData = S.points.map(p => ({p, fs:null})); renderPoints(); return 'nokey'; }
+  const res = await Promise.all(S.points.map(async p => {
+    try{
+      const j = await fetchJSON(`https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/10/json?point=${p.lat},${p.lon}&unit=KMPH&key=${encodeURIComponent(S.key)}`);
+      return {p, fs: j.flowSegmentData};
+    }catch(e){ return {p, fs:null, err:String(e.message||e)}; }
+  }));
+  pointData = res;
+  res.forEach(({p, fs}) => {
+    const k = classify(fs);
+    if(fs && fs.coordinates && fs.coordinates.coordinate){
+      const ll = fs.coordinates.coordinate.map(c => [c.latitude, c.longitude]);
+      L.polyline(ll, {color:k.col, weight:9, opacity:.9}).bindPopup(pointPopup(p, fs, k)).addTo(pointsLayer);
+    }
+    L.circleMarker([p.lat, p.lon], {radius:6, color:'#fff', weight:2, fillColor:k.col, fillOpacity:1})
+      .bindPopup(pointPopup(p, fs, k)).addTo(pointsLayer);
+  });
+  renderPoints();
+  const ok = res.filter(r => r.fs).length;
+  return ok ? 'ok' : 'err';
+}
+function pointPopup(p, fs, k){
+  if(!fs) return `<b>${esc(p.name)}</b><br>Немає даних`;
+  return `<b>${esc(p.name)}</b><br>${k.t}: ${fs.currentSpeed} км/год (звичайно ${fs.freeFlowSpeed})<br>`+
+         `Час проїзду ділянки: ${fs.currentTravelTime} с (звичайно ${fs.freeFlowTravelTime} с)<br>Довіра: ${Math.round((fs.confidence??0)*100)}%`;
+}
+function renderPoints(){
+  const box = $('pointsList');
+  if(!S.key){ box.innerHTML = '<div class="card muted">Додайте ключ TomTom у налаштуваннях, щоб бачити швидкість на ділянках.</div>'; }
+  else box.innerHTML = pointData.map(({p, fs, err}, i) => {
+    const k = classify(fs);
+    const body = fs ? `<span class="big">${fs.currentSpeed}</span> <span class="muted">км/год · звичайно ${fs.freeFlowSpeed} · довіра ${Math.round((fs.confidence??0)*100)}%</span>`
+                    : `<span class="muted">${esc(err || 'немає даних')}</span>`;
+    return `<div class="card"><h3><span style="cursor:pointer" data-go="${i}">${esc(p.name)}</span><span><span class="tag ${k.c}">${k.t}</span>
+            <button class="link" data-del="${i}" title="Видалити">✕</button></span></h3>${body}</div>`;
+  }).join('');
+  box.querySelectorAll('[data-go]').forEach(b => b.onclick = () => { const p = S.points[+b.dataset.go]; collapse(true); map.setView([p.lat,p.lon], 15); });
+  box.querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
+    S.points.splice(+b.dataset.del, 1); store.set('points', S.points); refreshTraffic();
+  });
+}
+// додати ділянку довгим натисканням
+map.on('contextmenu', e => {
+  if(pickMode) return;
+  const name = prompt('Назва ділянки (напр. «Броварський біля Дарниці»):');
+  if(!name) return;
+  S.points.push({name, lat:+e.latlng.lat.toFixed(5), lon:+e.latlng.lng.toFixed(5)});
+  store.set('points', S.points); refreshTraffic();
+});
+
+/* ---------- маршрути (TomTom Routing з урахуванням трафіку) ---------- */
+const routesLayer = L.layerGroup().addTo(map);
+let routeGeo = {}; // id -> [[lat,lon],...]
+async function geocode(q){
+  const j = await fetchJSON(`https://api.tomtom.com/search/2/geocode/${encodeURIComponent(q + ', Київ')}.json?countrySet=UA&limit=1&lat=${KYIV[0]}&lon=${KYIV[1]}&language=uk-UA&key=${encodeURIComponent(S.key)}`);
+  const r = j.results && j.results[0];
+  if(!r) throw new Error('Адресу не знайдено: ' + q);
+  return {lat:r.position.lat, lon:r.position.lon, label:r.address.freeformAddress || q};
+}
+async function loadRoutes(){
+  routesLayer.clearLayers();
+  if(!S.key){ renderRoutes([]); return; }
+  const res = await Promise.all(S.routes.map(async r => {
+    try{
+      const j = await fetchJSON(`https://api.tomtom.com/routing/1/calculateRoute/${r.from.lat},${r.from.lon}:${r.to.lat},${r.to.lon}/json?traffic=true&travelMode=car&routeType=fastest&computeTravelTimeFor=all&key=${encodeURIComponent(S.key)}`);
+      const route = j.routes[0];
+      const pts = route.legs.flatMap(l => l.points.map(p => [p.latitude, p.longitude]));
+      routeGeo[r.id] = pts;
+      L.polyline(pts, {color:'#2563eb', weight:5, opacity:.7}).bindPopup(esc(r.name)).addTo(routesLayer);
+      return {r, s: route.summary, near: repairsNear(pts)};
+    }catch(e){ return {r, err:String(e.message||e)}; }
+  }));
+  renderRoutes(res);
+}
+function distM(a, b){ // наближено, для міста достатньо
+  const dx = (a[1]-b[1]) * 111320 * Math.cos(a[0]*Math.PI/180), dy = (a[0]-b[0]) * 110540;
+  return Math.hypot(dx, dy);
+}
+function distToSegM(p, a, b){ // відстань від точки до відрізка, м
+  const k = 111320 * Math.cos(p[0]*Math.PI/180), m = 110540;
+  const ax = (a[1]-p[1])*k, ay = (a[0]-p[0])*m, bx = (b[1]-p[1])*k, by = (b[0]-p[0])*m;
+  const dx = bx-ax, dy = by-ay, len2 = dx*dx + dy*dy;
+  const t = len2 ? Math.max(0, Math.min(1, -(ax*dx + ay*dy)/len2)) : 0;
+  return Math.hypot(ax + t*dx, ay + t*dy);
+}
+function repairsNear(pts, radius = 40){
+  if(!repairs || !pts.length) return [];
+  const step = Math.max(1, Math.floor(pts.length / 400));
+  const rp = pts.filter((_, i) => i % step === 0);
+  // рамка маршруту, щоб швидко відкинути далекі ремонти
+  const pad = 0.002, lats = rp.map(p => p[0]), lons = rp.map(p => p[1]);
+  const box = [Math.min(...lats)-pad, Math.max(...lats)+pad, Math.min(...lons)-pad, Math.max(...lons)+pad];
+  const out = [];
+  repairsLayer.eachLayer(l => {
+    let lines = [];
+    if(l.getLatLngs){
+      const ll = l.getLatLngs();
+      const flatLines = Array.isArray(ll[0]) ? (Array.isArray(ll[0][0]) ? ll.flat(1) : ll) : [ll];
+      lines = flatLines.map(line => line.map(x => [x.lat, x.lng]));
+    } else if(l.getLatLng){ const x = l.getLatLng(); lines = [[[x.lat, x.lng]]]; }
+    const all = lines.flat();
+    const fl = all.map(v => v[0]), fo = all.map(v => v[1]);
+    if(Math.max(...fl) < box[0] || Math.min(...fl) > box[1] || Math.max(...fo) < box[2] || Math.min(...fo) > box[3]) return;
+    const hit = lines.some(line => line.length === 1
+      ? rp.some(p => distM(line[0], p) < radius)
+      : line.some((v, i) => i > 0 && rp.some(p => distToSegM(p, line[i-1], v) < radius)));
+    if(hit) out.push(l.feature.properties || {});
+  });
+  return out;
+}
+function renderRoutes(res){
+  const box = $('routesList');
+  if(!S.routes.length){ box.innerHTML = '<div class="card muted">Маршрутів ще немає. Додайте перший нижче.</div>'; return; }
+  if(!S.key){ box.innerHTML = '<div class="card muted">Додайте ключ TomTom у налаштуваннях, щоб рахувати час у дорозі.</div>'; return; }
+  box.innerHTML = res.map(({r, s, near, err}) => {
+    if(err) return `<div class="card"><h3><span>${esc(r.name)}</span><button class="link" data-rdel="${r.id}">✕</button></h3><span class="muted">Помилка: ${esc(err)}</span></div>`;
+    const now = mins(s.travelTimeInSeconds), free = mins(s.noTrafficTravelTimeInSeconds ?? s.travelTimeInSeconds),
+          usual = s.historicTrafficTravelTimeInSeconds ? mins(s.historicTrafficTravelTimeInSeconds) : null,
+          delay = mins(s.trafficDelayInSeconds || 0);
+    const diff = usual !== null ? now - usual : null;
+    const tag = diff === null ? '' : diff >= 10 ? `<span class="tag r">+${diff} хв до звичайного</span>` : diff >= 4 ? `<span class="tag y">+${diff} хв</span>` : `<span class="tag g">як зазвичай</span>`;
+    const nearHtml = near.length ? `<div class="muted" style="margin-top:6px">Ремонти на шляху: ${near.length}</div><ul class="rep">${near.slice(0,6).map(p => `<li>${esc(repTitle(p))}${isFull(p)?' — <b>повне перекриття</b>':''}</li>`).join('')}</ul>` : '<div class="muted" style="margin-top:6px">Ремонтів на шляху немає</div>';
+    return `<div class="card"><h3><span style="cursor:pointer" data-rgo="${r.id}">${esc(r.name)}</span><button class="link" data-rdel="${r.id}">✕</button></h3>
+      <div class="row"><span class="big">${now} хв</span>${tag}</div>
+      <div class="muted">${(s.lengthInMeters/1000).toFixed(1)} км · без заторів ${free} хв${usual!==null?` · зазвичай ${usual} хв`:''} · затримка ${delay} хв</div>${nearHtml}</div>`;
+  }).join('');
+  box.querySelectorAll('[data-rdel]').forEach(b => b.onclick = () => {
+    if(!confirm('Видалити маршрут?')) return;
+    S.routes = S.routes.filter(r => r.id !== b.dataset.rdel); store.set('routes', S.routes); loadRoutes();
+  });
+  box.querySelectorAll('[data-rgo]').forEach(b => b.onclick = () => {
+    const pts = routeGeo[b.dataset.rgo]; if(pts){ collapse(true); map.fitBounds(pts, {padding:[40,40]}); }
+  });
+}
+
+// вибір точки на карті
+let pickMode = null, picked = {from:null, to:null};
+document.querySelectorAll('[data-pick]').forEach(b => b.onclick = () => {
+  pickMode = b.dataset.pick; collapse(true);
+  $('pickHint').textContent = pickMode === 'from' ? 'Торкніться карти: звідки' : 'Торкніться карти: куди';
+  $('pickHint').style.display = 'block';
+});
+map.on('click', e => {
+  if(!pickMode) return;
+  picked[pickMode] = {lat:+e.latlng.lat.toFixed(5), lon:+e.latlng.lng.toFixed(5), label:'точка на карті'};
+  $(pickMode === 'from' ? 'rFrom' : 'rTo').value = `📍 ${picked[pickMode].lat}, ${picked[pickMode].lon}`;
+  pickMode = null; $('pickHint').style.display = 'none'; collapse(false);
+});
+$('rFrom').oninput = () => { picked.from = null; };
+$('rTo').oninput = () => { picked.to = null; };
+$('rAdd').onclick = async () => {
+  const msg = $('rMsg');
+  if(!S.key){ msg.textContent = 'Спершу додайте ключ TomTom у налаштуваннях.'; return; }
+  try{
+    msg.textContent = 'Шукаю адреси…';
+    const from = picked.from || await geocode($('rFrom').value.trim());
+    const to = picked.to || await geocode($('rTo').value.trim());
+    const name = $('rName').value.trim() || 'Маршрут';
+    S.routes.push({id: Date.now().toString(36), name, from, to});
+    store.set('routes', S.routes);
+    $('rName').value = $('rFrom').value = $('rTo').value = ''; picked = {from:null, to:null};
+    msg.textContent = `Збережено: ${from.label} → ${to.label}`;
+    loadRoutes();
+  }catch(e){ msg.textContent = String(e.message || e); }
+};
+
+/* ---------- тривога ---------- */
+async function loadAlert(){
+  if(!S.alerts){ setStatus('Al', '', 'Тривога: —'); $('alertBanner').style.display = 'none'; return false; }
+  try{
+    const v = await fetchJSON(`https://api.alerts.in.ua/v1/iot/active_air_raid_alerts/${KYIV_ALERT_UID}.json?token=${encodeURIComponent(S.alerts)}`, 10000);
+    const st = String(v).replace(/"/g, '');
+    const on = st === 'A' || st === 'P';
+    setStatus('Al', on ? 'err' : 'ok', on ? 'Тривога в Києві' : 'Тривоги немає');
+    $('alertBanner').style.display = on ? 'block' : 'none';
+    return on;
+  }catch(e){
+    setStatus('Al', 'stale', 'Тривога: невідомо'); return false;
+  }
+}
+
+/* ---------- оновлення ---------- */
+async function refreshTraffic(){
+  if(!S.key){ setStatus('Traf', '', 'Затори: потрібен ключ'); await loadPoints(); renderRoutes([]); return; }
+  tomtomTiles();
+  const [st] = await Promise.all([loadPoints(), loadRoutes()]);
+  const lowConf = pointData.filter(d => d.fs && (d.fs.confidence ?? 1) < 0.5).length;
+  if(st === 'ok') setStatus('Traf', lowConf ? 'stale' : 'ok', `Затори ${hhmm(Date.now())}${lowConf ? ` · ненадійних ${lowConf}` : ''}`);
+  else setStatus('Traf', 'err', 'Затори: помилка TomTom');
+}
+let busy = false;
+async function refreshAll(){
+  if(busy) return; busy = true; $('refreshBtn').textContent = '⟳ …';
+  try{ await loadAlert(); await loadRepairs(); await refreshTraffic(); }
+  finally{ busy = false; $('refreshBtn').textContent = '⟳ Оновити'; }
+}
+$('refreshBtn').onclick = refreshAll;
+setInterval(() => { if(document.visibilityState === 'visible') refreshAll(); }, REFRESH_MS);
+document.addEventListener('visibilitychange', () => { if(document.visibilityState === 'visible') refreshAll(); });
+
+/* ---------- інтерфейс панелі ---------- */
+function collapse(c){ $('sheet').classList.toggle('collapsed', c); }
+$('grab').onclick = () => $('sheet').classList.toggle('collapsed');
+document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('#tabs button').forEach(x => x.classList.toggle('on', x === b));
+  document.querySelectorAll('.pane').forEach(p => p.classList.toggle('on', p.id === 'p-' + b.dataset.tab));
+  collapse(false);
+});
+function fillSettings(){
+  $('sKey').value = S.key; $('sAlerts').value = S.alerts; $('sProxy').value = S.proxy;
+  $('lFlow').checked = S.layers.flow; $('lInc').checked = S.layers.inc; $('lRep').checked = S.layers.rep;
+}
+$('sSave').onclick = () => {
+  S.key = $('sKey').value.trim(); S.alerts = $('sAlerts').value.trim(); S.proxy = $('sProxy').value.trim();
+  S.layers = {flow:$('lFlow').checked, inc:$('lInc').checked, rep:$('lRep').checked};
+  ['key','alerts','proxy','layers'].forEach(k => store.set(k, S[k]));
+  refreshAll();
+};
+$('sResetPts').onclick = () => { S.points = DEFAULT_POINTS.slice(); store.set('points', S.points); refreshTraffic(); };
+
+fillSettings();
+refreshAll();
+if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+</script>
+</body>
+</html>
