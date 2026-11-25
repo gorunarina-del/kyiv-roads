@@ -293,6 +293,7 @@ $('repSearch').oninput = renderRepairsList;
 /* ---------- ключові ділянки (TomTom Flow Segment Data) ---------- */
 const pointsLayer = L.layerGroup().addTo(map);
 let pointData = [];
+let tomtomLive = null; // false = TomTom не має живого трафіку для Києва (лише статистика)
 function classify(fs){
   if(!fs) return {c:'n', col:'#94a3b8', t:'немає даних'};
   if(fs.roadClosure) return {c:'k', col:'#111', t:'перекрито'};
@@ -312,6 +313,7 @@ async function loadPoints(){
     }catch(e){ return {p, fs:null, err:String(e.message||e)}; }
   }));
   pointData = res;
+  tomtomLive = res.some(r => r.fs);
   res.forEach(({p, fs}) => {
     const k = classify(fs);
     if(fs && fs.coordinates && fs.coordinates.coordinate){
@@ -333,6 +335,7 @@ function pointPopup(p, fs, k){
 function renderPoints(){
   const box = $('pointsList');
   if(!S.key){ box.innerHTML = '<div class="card muted">Додайте ключ TomTom у налаштуваннях, щоб бачити швидкість на ділянках.</div>'; }
+  else if(tomtomLive === false){ box.innerHTML = '<div class="card"><h3>Живих даних немає</h3><div class="muted">TomTom не віддає швидкість на дорогах Києва: в Україні живий трафік закрито з міркувань безпеки (так само, як у Google). Ділянки запрацюють, якщо TomTom відновить дані; застосунок перевіряє це при кожному оновленні.</div></div>'; }
   else box.innerHTML = pointData.map(({p, fs, err}, i) => {
     const k = classify(fs);
     const body = fs ? `<span class="big">${fs.currentSpeed}</span> <span class="muted">км/год · звичайно ${fs.freeFlowSpeed} · довіра ${Math.round((fs.confidence??0)*100)}%</span>`
@@ -414,6 +417,11 @@ function repairsNear(pts, radius = 40){
   });
   return out;
 }
+function nearHtmlOf(near){
+  return near.length
+    ? `<div class="muted" style="margin-top:6px">Ремонти на шляху: ${near.length}</div><ul class="rep">${near.slice(0,6).map(p => `<li>${esc(repTitle(p))}${isFull(p)?' — <b>повне перекриття</b>':''}</li>`).join('')}</ul>`
+    : '<div class="muted" style="margin-top:6px">Ремонтів на шляху немає</div>';
+}
 function renderRoutes(res){
   const box = $('routesList');
   if(!S.routes.length){ box.innerHTML = '<div class="card muted">Маршрутів ще немає. Додайте перший нижче.</div>'; return; }
@@ -423,12 +431,20 @@ function renderRoutes(res){
     const now = mins(s.travelTimeInSeconds), free = mins(s.noTrafficTravelTimeInSeconds ?? s.travelTimeInSeconds),
           usual = s.historicTrafficTravelTimeInSeconds ? mins(s.historicTrafficTravelTimeInSeconds) : null,
           delay = mins(s.trafficDelayInSeconds || 0);
+    const gUrl = `https://www.google.com/maps/dir/?api=1&origin=${r.from.lat},${r.from.lon}&destination=${r.to.lat},${r.to.lon}&travelmode=driving`;
+    const gBtn = `<a class="btn" href="${gUrl}" target="_blank" rel="noopener" style="display:inline-block;text-decoration:none;margin-top:8px">Живий час у Google Maps ↗</a>`;
+    const repNote = repairs ? '' : '<div class="muted" style="margin-top:6px">Дані про ремонти зараз недоступні</div>';
+    if(!tomtomLive){
+      return `<div class="card"><h3><span style="cursor:pointer" data-rgo="${r.id}">${esc(r.name)}</span><button class="link" data-rdel="${r.id}">✕</button></h3>
+        <div class="row"><span class="big">~${usual ?? now} хв</span><span class="tag n">статистика, не наживо</span></div>
+        <div class="muted">${(s.lengthInMeters/1000).toFixed(1)} км · типовий час для цієї години за історією TomTom. Живих заторів по Києву TomTom не має, реальний час може бути значно більшим.</div>
+        ${repairs ? nearHtmlOf(near) : repNote}${gBtn}</div>`;
+    }
     const diff = usual !== null ? now - usual : null;
     const tag = diff === null ? '' : diff >= 10 ? `<span class="tag r">+${diff} хв до звичайного</span>` : diff >= 4 ? `<span class="tag y">+${diff} хв</span>` : `<span class="tag g">як зазвичай</span>`;
-    const nearHtml = near.length ? `<div class="muted" style="margin-top:6px">Ремонти на шляху: ${near.length}</div><ul class="rep">${near.slice(0,6).map(p => `<li>${esc(repTitle(p))}${isFull(p)?' — <b>повне перекриття</b>':''}</li>`).join('')}</ul>` : '<div class="muted" style="margin-top:6px">Ремонтів на шляху немає</div>';
     return `<div class="card"><h3><span style="cursor:pointer" data-rgo="${r.id}">${esc(r.name)}</span><button class="link" data-rdel="${r.id}">✕</button></h3>
       <div class="row"><span class="big">${now} хв</span>${tag}</div>
-      <div class="muted">${(s.lengthInMeters/1000).toFixed(1)} км · без заторів ${free} хв${usual!==null?` · зазвичай ${usual} хв`:''} · затримка ${delay} хв</div>${nearHtml}</div>`;
+      <div class="muted">${(s.lengthInMeters/1000).toFixed(1)} км · без заторів ${free} хв${usual!==null?` · зазвичай ${usual} хв`:''} · затримка ${delay} хв</div>${repairs ? nearHtmlOf(near) : repNote}${gBtn}</div>`;
   }).join('');
   box.querySelectorAll('[data-rdel]').forEach(b => b.onclick = () => {
     if(!confirm('Видалити маршрут?')) return;
@@ -489,10 +505,11 @@ async function loadAlert(){
 async function refreshTraffic(){
   if(!S.key){ setStatus('Traf', '', 'Затори: потрібен ключ'); await loadPoints(); renderRoutes([]); return; }
   tomtomTiles();
-  const [st] = await Promise.all([loadPoints(), loadRoutes()]);
+  const st = await loadPoints();   // спершу ділянки: з них видно, чи є живі дані
+  await loadRoutes();
   const lowConf = pointData.filter(d => d.fs && (d.fs.confidence ?? 1) < 0.5).length;
   if(st === 'ok') setStatus('Traf', lowConf ? 'stale' : 'ok', `Затори ${hhmm(Date.now())}${lowConf ? ` · ненадійних ${lowConf}` : ''}`);
-  else setStatus('Traf', 'err', 'Затори: помилка TomTom');
+  else setStatus('Traf', 'err', 'Затори: живих даних по Києву немає');
 }
 let busy = false;
 async function refreshAll(){
